@@ -1,0 +1,86 @@
+<div class="dashboard">
+  <!-- Top Row -->
+  <div class="top-row">
+    <div class="queue-box">
+      <span class="queue-label">In Queue</span>
+      <span class="queue-count">{{ queueCount }}</span>
+    </div>
+
+    <div class="control">
+      <label for="environment">Environment</label>
+      <select id="environment" [(ngModel)]="selectedEnvironment" (change)="onEnvironmentChange()">
+        <option *ngFor="let env of environments" [value]="env">{{ env }}</option>
+      </select>
+    </div>
+
+    <div class="control">
+      <label for="date">Date</label>
+      <input id="date" type="date" [(ngModel)]="selectedDate" (change)="onDateChange()" />
+    </div>
+
+    <div class="control jwt-control">
+      <label for="jwt">JWT</label>
+      <input id="jwt" type="password" [(ngModel)]="jwtToken" placeholder="Paste token" />
+    </div>
+
+    <button class="load-btn" (click)="loadData()" [disabled]="loading">
+      <span *ngIf="loading" class="spinner-inline"></span>
+      {{ loading ? 'Loading...' : 'Load' }}
+    </button>
+  </div>
+
+  <!-- Loading Overlay -->
+  <div *ngIf="loading" class="loading-overlay">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Priority Sections -->
+  <div *ngFor="let section of sections" class="priority-section">
+    <h2 class="section-heading">{{ section.displayName }}</h2>
+
+    <div class="cards-row" *ngIf="section.cards.length > 0 && section.displayName !== 'Rest of the Domains'; else restOrEmpty">
+      <div *ngFor="let card of section.cards" class="bpc-card">
+        <div class="card-header">{{ card.bpcName }}</div>
+        <table class="card-table">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Published</th>
+              <th>Missed/Queue</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of card.modules">
+              <td class="module-name">{{ row.module }}</td>
+              <td class="count published">{{ row.published }}</td>
+              <td class="count missed">{{ row.missedQueue }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <ng-template #restOrEmpty>
+      <div class="cards-row" *ngIf="section.displayName === 'Rest of the Domains' && section.cards.length > 0">
+        <div class="bpc-card">
+          <div class="card-header">All Other Domains</div>
+          <table class="card-table">
+            <thead>
+              <tr>
+                <th>Module</th>
+                <th>Missed/Queue</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let row of section.cards[0].modules; let i = index">
+                <td class="module-name">{{ row.module }}</td>
+                <td class="count missed">{{ getRestTotal(section, i) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p *ngIf="section.cards.length === 0" class="no-data">No domains in this group.</p>
+    </ng-template>
+  </div>
+</div>

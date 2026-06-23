@@ -1,0 +1,32 @@
+{
+  "UAT": [
+    {
+      "displayName": "Priority 1 Domains",
+      "bpcs": [70022010, 70021828, 70022201]
+    },
+    {
+      "displayName": "Rest of the Domains",
+      "bpcs": []
+    }
+  ],
+  "PROD": [
+    {
+      "displayName": "Priority 1 Domains",
+      "bpcs": [70022010, 70021828, 70022201]
+    },
+    {
+      "displayName": "Rest of the Domains",
+      "bpcs": []
+    }
+  ],
+  "QC": [
+    {
+      "displayName": "Priority 1 Domains",
+      "bpcs": [70022010, 70021828, 70022201]
+    },
+    {
+      "displayName": "Rest of the Domains",
+      "bpcs": []
+    }
+  ]
+}
