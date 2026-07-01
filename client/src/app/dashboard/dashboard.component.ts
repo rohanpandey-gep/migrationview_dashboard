@@ -2,7 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DashboardService } from './dashboard.service';
-import { DashboardResponse, SeedResponse, PrioritySection } from './models';
+import { ModuleCounts, PrioritySection } from './models';
 
 @Component({
   selector: 'app-dashboard',
@@ -36,7 +36,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   loadData(): void {
-    if (!this.selectedEnvironment) return;
+    if (!this.selectedEnvironment || this.loading) return;
     this.loading = true;
 
     let token = this.jwtToken.trim();
@@ -82,6 +82,38 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   getRestTotal(section: PrioritySection, moduleIndex: number): number {
     return section.cards.reduce((sum, card) => sum + (card.modules[moduleIndex]?.missedQueue ?? 0), 0);
+  }
+
+  getRestPublishedTotal(section: PrioritySection, moduleIndex: number): number {
+    return section.cards.reduce((sum, card) => sum + (card.modules[moduleIndex]?.published ?? 0), 0);
+  }
+
+  getRestFailedTotal(section: PrioritySection, moduleIndex: number): number {
+    return section.cards.reduce((sum, card) => sum + (card.modules[moduleIndex]?.failed ?? 0), 0);
+  }
+
+  getPriorityRowStatus(row: ModuleCounts): 'healthy' | 'warning' | 'critical' {
+    return this.getRowStatus(row.missedQueue, row.failed);
+  }
+
+  getPriorityRowClass(row: ModuleCounts): string {
+    return `status-${this.getPriorityRowStatus(row)}`;
+  }
+
+  getRestRowStatus(section: PrioritySection, moduleIndex: number): 'healthy' | 'warning' | 'critical' {
+    const missedQueue = this.getRestTotal(section, moduleIndex);
+    const failed = this.getRestFailedTotal(section, moduleIndex);
+    return this.getRowStatus(missedQueue, failed);
+  }
+
+  getRestRowClass(section: PrioritySection, moduleIndex: number): string {
+    return `status-${this.getRestRowStatus(section, moduleIndex)}`;
+  }
+
+  private getRowStatus(missedQueue: number, failed: number): 'healthy' | 'warning' | 'critical' {
+    if (failed > 0) return 'critical';
+    if (missedQueue > 0) return 'warning';
+    return 'healthy';
   }
 
   private getTodayString(): string {

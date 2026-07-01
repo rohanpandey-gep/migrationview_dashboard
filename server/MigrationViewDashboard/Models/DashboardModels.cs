@@ -17,6 +17,7 @@ public class ModuleCounts
     public string Module { get; set; } = string.Empty;
     public int Published { get; set; }
     public int MissedQueue { get; set; }
+    public int Failed { get; set; }
 }
 
 public class BpcCard

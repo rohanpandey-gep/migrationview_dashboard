@@ -2,6 +2,7 @@ export interface ModuleCounts {
   module: string;
   published: number;
   missedQueue: number;
+  failed: number;
 }
 
 export interface BpcCard {

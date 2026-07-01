@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using MigrationViewDashboard.Models;
 using MigrationViewDashboard.Services;
@@ -48,6 +49,12 @@ public class DashboardController : ControllerBase
         [FromQuery] string? date,
         [FromHeader(Name = "X-Auth-Token")] string? authorization)
     {
+        if (string.IsNullOrWhiteSpace(environment) || string.IsNullOrWhiteSpace(date))
+            return BadRequest(new { error = "Both environment and date are required." });
+
+        if (string.IsNullOrWhiteSpace(authorization))
+            return BadRequest(new { error = "X-Auth-Token header is required." });
+
         var dataPath = Path.Combine(_env.ContentRootPath, "data");
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
@@ -60,70 +67,109 @@ public class DashboardController : ControllerBase
         var envKey = environment.ToUpper();
         var priorityGroups = allGroups.ContainsKey(envKey) ? allGroups[envKey] : allGroups.Values.FirstOrDefault() ?? new();
 
-        // Collect all priority BPC codes (to exclude from "Rest of Domains" count)
         var priorityBpcCodes = priorityGroups
             .Where(pg => pg.Bpcs.Count > 0)
             .SelectMany(pg => pg.Bpcs)
             .ToHashSet();
 
-        // TODO: Replace with real API call that returns all BPCs with codes and names
-        var allBpcs = new List<BpcInfo>
+        var moduleIndexByName = modules
+            .Select((module, index) => (module, index))
+            .ToDictionary(x => x.module, x => x.index, StringComparer.OrdinalIgnoreCase);
+
+        var priorityGroupByCode = priorityGroups
+            .Where(pg => pg.Bpcs.Count > 0)
+            .SelectMany(pg => pg.Bpcs.Select(code => new { code, group = pg.DisplayName }))
+            .ToDictionary(x => x.code, x => x.group);
+
+        var priorityCardsByGroup = new Dictionary<string, Dictionary<int, BpcCard>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in priorityGroups.Where(pg => pg.Bpcs.Count > 0))
         {
-            new() { BpcCode = 70022010, BpcName = "Chevron" },
-            new() { BpcCode = 70021828, BpcName = "LeoSMB" },
-            new() { BpcCode = 70022201, BpcName = "BOFA" },
-            new() { BpcCode = 70019999, BpcName = "Shell" },
-            new() { BpcCode = 70018888, BpcName = "TotalEnergies" }
+            priorityCardsByGroup[group.DisplayName] = new Dictionary<int, BpcCard>();
+        }
+
+        var restCard = new BpcCard
+        {
+            BpcCode = 0,
+            BpcName = "All Other Domains",
+            Modules = modules.Select(CreateModuleCounts).ToList()
         };
 
-        // Fetch missed/queue counts for "Rest of Domains" from logs API
-        var restModuleCounts = new Dictionary<string, int>();
-        if (!string.IsNullOrEmpty(authorization) && !string.IsNullOrEmpty(date))
+        try
         {
-            var tasks = modules.Select(async m =>
+            var tasks = modules.Select(async module =>
             {
-                var count = await _logsService.GetMissedQueueCount(m, date, authorization, priorityBpcCodes);
-                return (Module: m, Count: count);
+                return await _logsService.GetEntriesForDate(module, date!, envKey, authorization!);
             });
+
             var results = await Task.WhenAll(tasks);
-            foreach (var r in results)
-                restModuleCounts[r.Module] = r.Count;
+
+            WriteCombinedApiLog(date!, envKey, results);
+
+            foreach (var moduleResult in results)
+            {
+                if (!moduleIndexByName.TryGetValue(moduleResult.Module, out var moduleIndex))
+                    continue;
+
+                foreach (var entry in moduleResult.MatchedEntries)
+                {
+                    var targetCard = ResolveTargetCard(
+                        entry,
+                        modules,
+                        priorityBpcCodes,
+                        priorityGroupByCode,
+                        priorityCardsByGroup,
+                        restCard);
+
+                    if (targetCard == null)
+                        continue;
+
+                    var status = LogsService.NormalizeStatus(entry.Status);
+                    var counts = targetCard.Modules[moduleIndex];
+
+                    if (status == "Published")
+                    {
+                        counts.Published++;
+                    }
+                    else if (status == "Failed")
+                    {
+                        counts.Failed++;
+                    }
+                    else
+                    {
+                        counts.MissedQueue++;
+                    }
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            if (ex.StatusCode.HasValue)
+                return StatusCode((int)ex.StatusCode.Value, new { error = ex.Message });
+
+            return StatusCode(502, new { error = ex.Message });
         }
 
         var sections = priorityGroups.Select(pg =>
         {
-            List<BpcCard> cards;
-            if (pg.Bpcs.Count > 0)
+            if (pg.Bpcs.Count == 0)
             {
-                cards = pg.Bpcs
-                    .Select(code => allBpcs.FirstOrDefault(b => b.BpcCode == code))
-                    .Where(b => b != null)
-                    .Select(b => BuildCard(b!, modules))
-                    .ToList();
-            }
-            else
-            {
-                // "Rest of the Domains" — single card with aggregated counts
-                cards = new List<BpcCard>
+                return new PrioritySection
                 {
-                    new BpcCard
-                    {
-                        BpcCode = 0,
-                        BpcName = "All Other Domains",
-                        Modules = modules.Select(m => new ModuleCounts
-                        {
-                            Module = m,
-                            Published = 0,
-                            MissedQueue = restModuleCounts.GetValueOrDefault(m, 0)
-                        }).ToList()
-                    }
+                    DisplayName = pg.DisplayName,
+                    Cards = new List<BpcCard> { restCard }
                 };
             }
+
+            var cardsByCode = priorityCardsByGroup.GetValueOrDefault(pg.DisplayName) ?? new Dictionary<int, BpcCard>();
+            var orderedCards = pg.Bpcs
+                .Where(code => cardsByCode.ContainsKey(code))
+                .Select(code => cardsByCode[code])
+                .ToList();
 
             return new PrioritySection
             {
                 DisplayName = pg.DisplayName,
-                Cards = cards
+                Cards = orderedCards
             };
         }).ToList();
 
@@ -157,18 +203,87 @@ public class DashboardController : ControllerBase
         return Content(body, "application/json");
     }
 
-    private static BpcCard BuildCard(BpcInfo bpc, List<string> modules)
+    private static BpcCard? ResolveTargetCard(
+        LogEntry entry,
+        List<string> modules,
+        HashSet<int> priorityBpcCodes,
+        Dictionary<int, string> priorityGroupByCode,
+        Dictionary<string, Dictionary<int, BpcCard>> priorityCardsByGroup,
+        BpcCard restCard)
     {
-        return new BpcCard
+        if (entry.BpcCode > 0 && priorityBpcCodes.Contains(entry.BpcCode) && priorityGroupByCode.TryGetValue(entry.BpcCode, out var groupName))
         {
-            BpcCode = bpc.BpcCode,
-            BpcName = bpc.BpcName,
-            Modules = modules.Select(m => new ModuleCounts
+            var cardsByCode = priorityCardsByGroup[groupName];
+            if (!cardsByCode.TryGetValue(entry.BpcCode, out var card))
             {
-                Module = m,
-                Published = 0,
-                MissedQueue = 0
-            }).ToList()
+                card = new BpcCard
+                {
+                    BpcCode = entry.BpcCode,
+                    BpcName = string.IsNullOrWhiteSpace(entry.BpcName) ? entry.BpcCode.ToString() : entry.BpcName,
+                    Modules = modules.Select(CreateModuleCounts).ToList()
+                };
+
+                cardsByCode[entry.BpcCode] = card;
+            }
+
+            return card;
+        }
+
+        return restCard;
+    }
+
+    private static ModuleCounts CreateModuleCounts(string module)
+    {
+        return new ModuleCounts
+        {
+            Module = module,
+            Published = 0,
+            MissedQueue = 0,
+            Failed = 0
         };
+    }
+
+    private void WriteCombinedApiLog(string date, string environment, IEnumerable<ModuleApiFetchResult> results)
+    {
+        var logDirectory = Path.Combine(_env.ContentRootPath, "logs");
+        Directory.CreateDirectory(logDirectory);
+
+        var outputPath = Path.Combine(logDirectory, "latest_dashboard_api_responses.json");
+
+        var payload = new
+        {
+            generatedAtUtc = DateTime.UtcNow,
+            request = new
+            {
+                environment,
+                date,
+                endpoint = "/api/dashboard/data"
+            },
+            modules = results.Select(r => new
+            {
+                r.Module,
+                r.ProjectGroupId,
+                r.IsSkipped,
+                fetchedPages = r.PageResponses.Count,
+                matchedEntries = r.MatchedEntries.Count,
+                pages = r.PageResponses.Select(p => new
+                {
+                    p.PageNumber,
+                    p.StatusCode,
+                    p.EntryCount,
+                    p.TotalCount,
+                    p.ApiResponse,
+                    p.RawBody
+                })
+            })
+        };
+
+        var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        });
+
+        System.IO.File.WriteAllText(outputPath, json);
     }
 }

@@ -1,11 +1,6 @@
 <div class="dashboard">
   <!-- Top Row -->
   <div class="top-row">
-    <div class="queue-box">
-      <span class="queue-label">In Queue</span>
-      <span class="queue-count">{{ queueCount }}</span>
-    </div>
-
     <div class="control">
       <label for="environment">Environment</label>
       <select id="environment" [(ngModel)]="selectedEnvironment" (change)="onEnvironmentChange()">
@@ -29,6 +24,24 @@
     </button>
   </div>
 
+  <div class="action-row">
+    <button class="refresh-btn" (click)="loadData()" [disabled]="loading || !selectedEnvironment">
+      <span *ngIf="loading" class="spinner-inline dark"></span>
+      {{ loading ? 'Refreshing...' : 'Refresh Dashboard' }}
+    </button>
+
+    <div class="queue-mini" aria-label="Current queue count">
+      <span class="queue-mini-label">In Queue</span>
+      <span class="queue-mini-value">{{ queueCount }}</span>
+    </div>
+
+    <div class="status-legend" aria-label="Row status legend">
+      <span class="legend-chip status-healthy">Healthy</span>
+      <span class="legend-chip status-warning">Attention</span>
+      <span class="legend-chip status-critical">Failed</span>
+    </div>
+  </div>
+
   <!-- Loading Overlay -->
   <div *ngIf="loading" class="loading-overlay">
     <div class="spinner"></div>
@@ -47,13 +60,18 @@
               <th>Module</th>
               <th>Published</th>
               <th>Missed/Queue</th>
+              <th>Failed</th>
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let row of card.modules">
-              <td class="module-name">{{ row.module }}</td>
+            <tr *ngFor="let row of card.modules" [ngClass]="getPriorityRowClass(row)">
+              <td class="module-name">
+                <span class="status-dot" [ngClass]="getPriorityRowClass(row)"></span>
+                {{ row.module }}
+              </td>
               <td class="count published">{{ row.published }}</td>
               <td class="count missed">{{ row.missedQueue }}</td>
+              <td class="count failed">{{ row.failed }}</td>
             </tr>
           </tbody>
         </table>
@@ -68,13 +86,20 @@
             <thead>
               <tr>
                 <th>Module</th>
+                <th>Published</th>
                 <th>Missed/Queue</th>
+                <th>Failed</th>
               </tr>
             </thead>
             <tbody>
-              <tr *ngFor="let row of section.cards[0].modules; let i = index">
-                <td class="module-name">{{ row.module }}</td>
+              <tr *ngFor="let row of section.cards[0].modules; let i = index" [ngClass]="getRestRowClass(section, i)">
+                <td class="module-name">
+                  <span class="status-dot" [ngClass]="getRestRowClass(section, i)"></span>
+                  {{ row.module }}
+                </td>
+                <td class="count published">{{ getRestPublishedTotal(section, i) }}</td>
                 <td class="count missed">{{ getRestTotal(section, i) }}</td>
+                <td class="count failed">{{ getRestFailedTotal(section, i) }}</td>
               </tr>
             </tbody>
           </table>
