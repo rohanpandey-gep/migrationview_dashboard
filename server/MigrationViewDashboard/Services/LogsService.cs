@@ -121,6 +121,9 @@ public class LogsService
                 if (!string.Equals((entry.Environment ?? string.Empty).Trim(), normalizedEnvironment, StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                if (!string.Equals((entry.PublishType ?? string.Empty).Trim(), "InterLayerMerge", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 matchedEntries.Add(entry);
             }
 
@@ -134,12 +137,31 @@ public class LogsService
         }
 
         _logger.LogInformation("[{Module}] Final matched entries for {Date}/{Environment}: {Count}", module, date, normalizedEnvironment, matchedEntries.Count);
+
+        // Deduplicate: same package published multiple times — keep only the best entry per group
+        var deduplicatedEntries = matchedEntries
+            .GroupBy(e => new
+            {
+                ProjectId = (e.ProjectId ?? string.Empty).Trim().ToLowerInvariant(),
+                SourceBpcCode = e.SourceBpcCode,
+                BpcCode = e.BpcCode,
+                SourceEnvironment = (e.SourceEnvironment ?? string.Empty).Trim().ToUpperInvariant(),
+                Environment = (e.Environment ?? string.Empty).Trim().ToUpperInvariant()
+            })
+            .Select(group => group
+                .OrderByDescending(e => DateTime.TryParse(e.Timestamp, out var ts) ? ts : DateTime.MinValue)
+                .ThenBy(e => StatusPriority(e.Status))
+                .First())
+            .ToList();
+
+        _logger.LogInformation("[{Module}] After deduplication: {Before} -> {After} entries", module, matchedEntries.Count, deduplicatedEntries.Count);
+
         return new ModuleApiFetchResult
         {
             Module = module,
             ProjectGroupId = projectGroupId,
             IsSkipped = false,
-            MatchedEntries = matchedEntries,
+            MatchedEntries = deduplicatedEntries,
             PageResponses = pageResponses
         };
     }
@@ -153,6 +175,18 @@ public class LogsService
             return "Failed";
 
         return "MissedQueue";
+    }
+
+    private static int StatusPriority(string? status)
+    {
+        if (string.Equals(status, "Published", StringComparison.OrdinalIgnoreCase))
+            return 0;
+
+        if (string.Equals(status, "Failed", StringComparison.OrdinalIgnoreCase))
+            return 2;
+
+        // MissedQueue / InQueue / anything else
+        return 1;
     }
 }
 
@@ -175,6 +209,11 @@ public class LogEntry
     public int BpcCode { get; set; }
     public string? BpcName { get; set; }
     public string? Environment { get; set; }
+    public string? PublishType { get; set; }
+    public string? ProjectId { get; set; }
+    public int SourceBpcCode { get; set; }
+    public string? SourceEnvironment { get; set; }
+    public string? SourceVersion { get; set; }
 }
 
 public class ModuleApiFetchResult

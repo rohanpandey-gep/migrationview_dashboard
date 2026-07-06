@@ -1,0 +1,10 @@
+# Build outputs
+server/**/bin/
+server/**/obj/
+
+# Logs (large API response dumps)
+server/**/logs/
+
+# OS files
+Thumbs.db
+.DS_Store
